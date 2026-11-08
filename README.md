@@ -77,6 +77,10 @@ same height is left out. Double-click copies a single word. Releasing the mouse 
 the selection, shows a "Text copied" chip and returns to your app. **Esc** cancels.
 The same shortcut closes the overlay.
 
+After Tac is installed or updated, macOS prepares accurate recognition once, which can
+take a minute or more on some Macs. Tac starts this when it opens and shows the progress in
+**Utilities → Screen → Text Recognition**; meanwhile quick recognition keeps the shortcut usable.
+
 Change the shortcut in **Utilities → Screen → Shortcut**: click it and press a new
 combination with ⌘, ⌃ or ⌥, or a function key.
 

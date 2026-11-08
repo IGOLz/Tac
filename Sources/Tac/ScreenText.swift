@@ -1,7 +1,9 @@
 import AppKit
 import Carbon.HIToolbox
 @preconcurrency import ScreenCaptureKit
+import Combine
 import SwiftUI
+import Vision
 
 enum ScreenCapture {
     /// Pixel size of a capture, so text is recognized at the display's native resolution.
@@ -56,8 +58,6 @@ final class ScreenText: ObservableObject {
             }
         }
         refresh()
-        // Vision loads its text model on first use; do it now so the first capture is quick.
-        Task.detached(priority: .utility) { TextLayout.warmUp() }
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.permitted = CGPreflightScreenCaptureAccess() }
         }
@@ -71,6 +71,8 @@ final class ScreenText: ObservableObject {
 
     func refresh() {
         permitted = CGPreflightScreenCaptureAccess()
+        // Vision loads its text models on first use: prepare them now, not when the shortcut is pressed.
+        if enabled { TextRecognition.shared.prepare() }
         if enabled, hotKey == nil, !recordingShortcut {
             failure = register(shortcut) ? nil : unavailable(shortcut)
         } else if !enabled {
@@ -256,25 +258,78 @@ final class ScreenTextWindow: NSWindow {
         container.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                                  owner: container, userInfo: nil))
 
+        self.image = image
+        recognize()
+    }
+
+    private var image: CGImage?
+    /// Upgrades the fast result once accurate recognition is ready; dropped with the window.
+    private var readySubscription: AnyCancellable?
+
+    /// Recognition runs off the main thread. While the accurate models are still being prepared,
+    /// the fast ones make the screen selectable right away; the accurate result replaces them
+    /// when ready, unless a selection has started.
+    private func recognize() {
+        guard let image else { return }
+        let size = frame.size
+        let recognition = TextRecognition.shared
+        let accurateReady = recognition.ready
+        if !accurateReady { recognition.prepare() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+            guard let self, self.isVisible, !self.recognized else { return }
+            self.setHint(ChipView(icon: "hourglass", text: "Preparing text recognition… The first time can take a minute"))
+        }
         Task { @MainActor [weak self] in
-            // Vision recognition is slow on a large display: keep it off the main thread.
-            let layout = await Task.detached(priority: .userInitiated) {
-                (try? TextLayout.recognize(image, size: size)) ?? TextLayout(lines: [])
-            }.value
-            guard let self else { return }
-            self.layout = layout
-            if let press = self.pendingPress, NSEvent.pressedMouseButtons & 1 != 0, let position = layout.word(near: press) {
-                self.anchor = (position, press)
-            }
-            self.pendingPress = nil
-            if layout.isEmpty {
-                self.setHint(ChipView(icon: "text.magnifyingglass", text: "No text found · Esc to close"))
-            } else {
-                self.setHint(ChipView(icon: "text.viewfinder", text: "Drag across text to copy · Esc to close"))
-                self.updateCursor()
-                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-                    NSAnimationContext.runAnimationGroup { $0.duration = 0.3; self?.hint.animator().alphaValue = 0 }
-                }
+            let first = await Self.run(image, size: size, level: accurateReady ? .accurate : .fast)
+            guard let self, self.isVisible else { return }
+            self.apply(first)
+        }
+        guard !accurateReady else { return }
+        readySubscription = recognition.$state.first { $0 == .ready }.sink { [weak self] _ in
+            self?.upgradeToAccurate(size: size)
+        }
+    }
+
+    private func upgradeToAccurate(size: CGSize) {
+        guard isVisible, let image else { return }
+        Task { @MainActor [weak self] in
+            let accurate = await Self.run(image, size: size, level: .accurate)
+            // A press waiting for text resumes on the accurate result; an active selection keeps its layout.
+            guard let self, self.isVisible, self.anchor == nil, self.selection.isEmpty, !accurate.isEmpty else { return }
+            self.apply(accurate)
+        }
+    }
+
+    override func close() {
+        readySubscription = nil
+        image = nil
+        super.close()
+    }
+
+    private nonisolated static func run(_ image: CGImage, size: CGSize, level: VNRequestTextRecognitionLevel) async -> TextLayout {
+        await Task.detached(priority: .userInitiated) {
+            (try? TextLayout.recognize(image, size: size, level: level)) ?? TextLayout(lines: [])
+        }.value
+    }
+
+    private var recognized = false
+
+    private func apply(_ layout: TextLayout) {
+        let firstResult = !recognized
+        recognized = true
+        self.layout = layout
+        if let press = pendingPress, NSEvent.pressedMouseButtons & 1 != 0, let position = layout.word(near: press) {
+            anchor = (position, press)
+        }
+        pendingPress = nil
+        updateCursor()
+        guard firstResult || hint.alphaValue > 0 else { return }
+        if layout.isEmpty {
+            setHint(ChipView(icon: "text.magnifyingglass", text: "No text found · Esc to close"))
+        } else {
+            setHint(ChipView(icon: "text.viewfinder", text: "Drag across text to copy · Esc to close"))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+                NSAnimationContext.runAnimationGroup { $0.duration = 0.3; self?.hint.animator().alphaValue = 0 }
             }
         }
     }

@@ -2,6 +2,7 @@ import Carbon.HIToolbox
 import CoreGraphics
 import Foundation
 import Testing
+import Vision
 @testable import Tac
 
 @Test func defaultShortcutDisplay() {
@@ -101,4 +102,15 @@ private let page = layout([
         TextWord(text: "second", rect: CGRect(x: 100, y: 0, width: 40, height: 20)),
     ])])
     #expect(rtl.rects(for: TextSelection(ranges: [(0, 0...1)])) == [CGRect(x: 100, y: 0, width: 140, height: 20)])
+}
+
+// The warm-up image must contain real text, or Vision may skip loading its recognition models.
+@Test func warmUpImageIsReadByBothRecognitionLevels() throws {
+    let image = try #require(TextLayout.sampleImage())
+    let size = CGSize(width: image.width, height: image.height)
+    for level in [VNRequestTextRecognitionLevel.accurate, .fast] {
+        let layout = try TextLayout.recognize(image, size: size, level: level)
+        let text = layout.lines.flatMap(\.words).map(\.text).joined(separator: " ")
+        #expect(text.localizedCaseInsensitiveContains("reads"), "level \(level.rawValue) read: \(text)")
+    }
 }

@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreText
 import Foundation
 @preconcurrency import Vision
 
@@ -170,19 +171,40 @@ struct TextLayout: Sendable {
         }
     }
 
-    static func warmUp() {
-        guard let context = CGContext(data: nil, width: 64, height: 32, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue),
-              let image = context.makeImage() else { return }
-        _ = try? recognize(image, size: CGSize(width: 64, height: 32))
+    /// An image with real text: a blank one may let Vision skip loading its recognition models.
+    static func sampleImage() -> CGImage? {
+        let size = CGSize(width: 640, height: 96)
+        guard let context = CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpaceCreateDeviceGray(),
+                                      bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        context.setFillColor(gray: 1, alpha: 1)
+        context.fill(CGRect(origin: .zero, size: size))
+        let font = CTFontCreateWithName("Helvetica" as CFString, 36, nil)
+        let text = NSAttributedString(string: "Tac reads text 2026", attributes: [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String): CGColor(gray: 0, alpha: 1),
+        ])
+        context.textPosition = CGPoint(x: 24, y: 32)
+        CTLineDraw(CTLineCreateWithAttributedString(text), context)
+        return context.makeImage()
     }
 
-    /// Recognizes text on-device with Vision, in any supported language.
-    static func recognize(_ image: CGImage, size: CGSize) throws -> TextLayout {
+    /// Runs the whole accurate pipeline once, so its models are loaded before the first capture.
+    /// The first run on a Mac can take a minute or more while macOS prepares them.
+    @discardableResult
+    static func warmUp() -> Bool {
+        guard let image = sampleImage(),
+              let layout = try? recognize(image, size: CGSize(width: image.width, height: image.height)) else { return false }
+        return !layout.isEmpty
+    }
+
+    /// Recognizes text on-device with Vision. `.accurate` detects the language automatically;
+    /// `.fast` loads much quicker and covers the first capture while `.accurate` is still preparing.
+    static func recognize(_ image: CGImage, size: CGSize, level: VNRequestTextRecognitionLevel = .accurate) throws -> TextLayout {
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = true
-        request.automaticallyDetectsLanguage = true
+        request.recognitionLevel = level
+        request.usesLanguageCorrection = level == .accurate
+        if level == .accurate { request.automaticallyDetectsLanguage = true }
         try VNImageRequestHandler(cgImage: image).perform([request])
         func viewRect(_ box: CGRect) -> CGRect {
             CGRect(x: box.minX * size.width, y: box.minY * size.height, width: box.width * size.width, height: box.height * size.height)

@@ -192,6 +192,7 @@ private struct SidebarStatus: View {
 struct UtilitiesView: View {
     @ObservedObject var shortcut: FinderBackspace
     @ObservedObject var screenText: ScreenText
+    @ObservedObject var recognition = TextRecognition.shared
 
     var body: some View {
         PageScroll {
@@ -235,7 +236,28 @@ struct UtilitiesView: View {
                 }
                 .disabled(!screenText.enabled)
                 .opacity(screenText.enabled ? 1 : 0.5)
+                if screenText.enabled {
+                    RowDivider()
+                    SettingRow(symbol: "text.magnifyingglass", color: .indigo, title: "Text Recognition",
+                               subtitle: recognitionStatus) {
+                        switch recognition.state {
+                        case .ready: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                        case .failed: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                        case .idle, .preparing: ProgressView().controlSize(.small)
+                        }
+                    }
+                }
             }
+        }
+    }
+}
+
+extension UtilitiesView {
+    var recognitionStatus: String {
+        switch recognition.state {
+        case .ready: "Ready on this Mac."
+        case .failed: "Quick recognition is in use. Tac retries accurate recognition at the next capture."
+        case .idle, .preparing: "Preparing… After installing or updating, this can take a minute. Quick recognition is used meanwhile."
         }
     }
 }
