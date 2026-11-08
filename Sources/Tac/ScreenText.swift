@@ -1,8 +1,8 @@
 import AppKit
 import Carbon.HIToolbox
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 import SwiftUI
-import VisionKit
+@preconcurrency import VisionKit
 
 enum ScreenTextHotKey {
     static let keyCode = UInt32(kVK_ANSI_T)
