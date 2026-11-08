@@ -88,27 +88,32 @@ struct UpdateSettingsView: View {
     @Bindable private var updater = AppUpdater.shared
 
     var body: some View {
-        Form {
-            Section {
-                Toggle("Check for Updates Automatically", isOn: $updater.automaticallyChecks)
+        PageScroll {
+            PageHero(symbol: "arrow.triangle.2.circlepath", color: .green, title: "Updates",
+                     description: "Signed updates from GitHub releases.")
+
+            SectionCard(title: "Automatic Updates",
+                        footer: "Tac checks for updates at launch and once a day. It asks before installing unless automatic installation is on.") {
+                ToggleRow(symbol: "clock.arrow.circlepath", color: .blue, title: "Check for Updates Automatically",
+                          isOn: $updater.automaticallyChecks)
                 if updater.allowsAutomaticDownloads {
-                    Toggle("Download and Install Updates Automatically", isOn: $updater.automaticallyDownloads)
+                    RowDivider()
+                    ToggleRow(symbol: "arrow.down.circle.fill", color: .green, title: "Download and Install Automatically",
+                              subtitle: "Installs when you quit Tac.", isOn: $updater.automaticallyDownloads)
                         .disabled(!updater.automaticallyChecks)
                 }
-            } footer: {
-                Text("Tac checks for updates at launch and once a day. It asks before installing unless automatic installation is enabled.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-            Section {
-                LabeledContent("Current Version", value: updater.versionDescription)
-                HStack {
-                    Spacer()
+
+            SectionCard(title: "Version") {
+                SettingRow(symbol: "info.circle.fill", color: .gray, title: "Current Version",
+                           subtitle: updater.versionDescription) {
                     Button("Check for Updates…") { updater.checkForUpdates() }
+                        .glassButtonStyle()
                         .disabled(!updater.canCheckForUpdates)
                 }
             }
         }
-        .formStyle(.grouped)
         .onAppear { updater.refresh() }
     }
 }
+

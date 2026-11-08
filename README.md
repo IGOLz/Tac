@@ -38,9 +38,9 @@ brew uninstall --cask tac
 ```
 
 Requires **macOS Sonoma 14 or later**. Finder shortcuts work on both architectures.
-Screen text selection requires a Mac supported by Apple's Live Text; Tac reports
-when Live Text is unavailable. Recognition quality depends on text size, language
-and image clarity. Intel builds are cross-compiled; runtime testing is on Apple silicon.
+Screen text recognition uses Apple's on-device Vision framework. Recognition quality
+depends on text size, language and image clarity. Intel builds are cross-compiled;
+runtime testing is on Apple silicon.
 
 Grant only the permissions needed by the features you enable:
 
@@ -69,10 +69,16 @@ empties the Trash.
 
 ### Copy Text from Screen
 
-Press **⌃⇧⌘T** to freeze the displays and select text, including text inside images,
-with Apple's on-device Live Text. Drag across recognized text to copy it; releasing
-the mouse copies the selection and returns to your app. **Esc** cancels. The same
-shortcut closes the overlay.
+Press **⌃⇧⌘T** to freeze the displays and select text, including text inside images.
+Text is recognized on your Mac with Apple's Vision framework. The pointer becomes an
+I-beam within a few points of recognized text, and a selection can start just beside it.
+Dragging selects whole words and stays in the column you start in, so a sidebar at the
+same height is left out. Double-click copies a single word. Releasing the mouse copies
+the selection, shows a "Text copied" chip and returns to your app. **Esc** cancels.
+The same shortcut closes the overlay.
+
+Change the shortcut in **Utilities → Screen → Shortcut**: click it and press a new
+combination with ⌘, ⌃ or ⌥, or a function key.
 
 ### Signed updates
 
@@ -133,7 +139,7 @@ for bugs and feature ideas. Remove private content from any screenshots you atta
 
 ## Acknowledgements
 
-Built with SwiftUI, AppKit, ScreenCaptureKit and VisionKit.
+Built with SwiftUI, AppKit, ScreenCaptureKit and Vision.
 Updates use [Sparkle](https://sparkle-project.org), distributed under its
 [license](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE).
 

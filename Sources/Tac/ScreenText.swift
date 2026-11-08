@@ -2,20 +2,15 @@ import AppKit
 import Carbon.HIToolbox
 @preconcurrency import ScreenCaptureKit
 import SwiftUI
-@preconcurrency import VisionKit
 
-enum ScreenTextHotKey {
-    static let keyCode = UInt32(kVK_ANSI_T)
-    static let modifiers = UInt32(controlKey | shiftKey | cmdKey)
-    static let label = "⌃⇧⌘T"
-
+enum ScreenCapture {
     /// Pixel size of a capture, so text is recognized at the display's native resolution.
     static func pixelSize(points: CGSize, scale: Float) -> (width: Int, height: Int) {
         (Int((points.width * CGFloat(scale)).rounded()), Int((points.height * CGFloat(scale)).rounded()))
     }
 }
 
-/// Freezes every display on a global shortcut and makes its text selectable with Live Text.
+/// Freezes every display on a global shortcut and makes its text selectable with on-device Vision text recognition.
 @MainActor
 final class ScreenText: ObservableObject {
     @Published var enabled: Bool {
@@ -23,14 +18,19 @@ final class ScreenText: ObservableObject {
     }
     @Published private(set) var permitted = CGPreflightScreenCaptureAccess()
     @Published private(set) var failure: String?
+    @Published private(set) var shortcut = HotKey.load("screenTextShortcut") ?? .screenTextDefault
     private var hotKey: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private var windows: [ScreenTextWindow] = []
     private var capturing = false
+    /// Bumped whenever a pending capture must not open its overlay anymore.
+    private var captureGeneration = 0
+    private var recordingShortcut = false
     private var timer: Timer?
-    private let analyzer = ImageAnalyzer()
     private let chip = CopiedChip()
     private var previousApp: NSRunningApplication?
+    /// The overlay that should be key once Tac's asynchronous activation completes.
+    private weak var keyTarget: NSWindow?
 
     init() {
         UserDefaults.standard.register(defaults: ["screenText": true])
@@ -47,7 +47,17 @@ final class ScreenText: ObservableObject {
                                                object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.dismiss(restoreFocus: false) }
         }
+        // Activation completes asynchronously since macOS 14; a window made key before that stays
+        // non-key, and then neither the cursor nor Esc work.
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                if let target = self?.keyTarget, target.isVisible { target.makeKey() }
+            }
+        }
         refresh()
+        // Vision loads its text model on first use; do it now so the first capture is quick.
+        Task.detached(priority: .utility) { TextLayout.warmUp() }
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.permitted = CGPreflightScreenCaptureAccess() }
         }
@@ -61,27 +71,78 @@ final class ScreenText: ObservableObject {
 
     func refresh() {
         permitted = CGPreflightScreenCaptureAccess()
-        if enabled, hotKey == nil {
-            let id = EventHotKeyID(signature: OSType(0x5461_6354), id: 1) // "TacT"
-            let status = RegisterEventHotKey(ScreenTextHotKey.keyCode, ScreenTextHotKey.modifiers, id,
-                                             GetApplicationEventTarget(), 0, &hotKey)
-            failure = status == noErr ? nil : "\(ScreenTextHotKey.label) is already used by another app."
+        if enabled, hotKey == nil, !recordingShortcut {
+            failure = register(shortcut) ? nil : unavailable(shortcut)
         } else if !enabled {
-            if let hotKey { UnregisterEventHotKey(hotKey) }
-            hotKey = nil
+            unregister()
             failure = nil
+            captureGeneration += 1
             dismiss()
         }
     }
 
+    private func unavailable(_ key: HotKey) -> String {
+        "\(key.displayString) is already used by another app. Choose another shortcut."
+    }
+
+    /// Saves and activates a new shortcut. Returns an error and keeps the old one if it can't be used.
+    @discardableResult
+    func setShortcut(_ new: HotKey) -> String? {
+        if let error = new.validationError { return error }
+        if enabled {
+            if new != shortcut || hotKey == nil {
+                // Claim the new combination before releasing the old one, so a failure keeps it working.
+                guard let ref = makeHotKey(new) else { return "\(new.displayString) is already used by another app." }
+                unregister()
+                hotKey = ref
+            }
+        }
+        shortcut = new
+        new.save("screenTextShortcut")
+        failure = nil
+        return nil
+    }
+
+    /// While recording a new shortcut, the current one must reach the recorder instead of opening the overlay.
+    func suspendHotKey() {
+        recordingShortcut = true
+        unregister()
+    }
+
+    func resumeHotKey() {
+        recordingShortcut = false
+        if enabled, hotKey == nil { failure = register(shortcut) ? nil : unavailable(shortcut) }
+    }
+
+    private func makeHotKey(_ key: HotKey) -> EventHotKeyRef? {
+        let id = EventHotKeyID(signature: OSType(0x5461_6354), id: 1) // "TacT"
+        var ref: EventHotKeyRef?
+        guard RegisterEventHotKey(key.keyCode, key.modifiers, id, GetApplicationEventTarget(), 0, &ref) == noErr else { return nil }
+        return ref
+    }
+
+    private func register(_ key: HotKey) -> Bool {
+        guard let ref = makeHotKey(key) else { return false }
+        hotKey = ref
+        return true
+    }
+
+    private func unregister() {
+        if let hotKey { UnregisterEventHotKey(hotKey) }
+        hotKey = nil
+    }
+
     func toggle() {
         if !windows.isEmpty { dismiss(); return }
-        guard enabled, !capturing else { return }
+        // A second press while the screen is still being captured cancels it.
+        if capturing { captureGeneration += 1; return }
+        guard enabled, !recordingShortcut else { return }
         guard CGPreflightScreenCaptureAccess() else { requestPermission(); return }
-        guard ImageAnalyzer.isSupported else { failure = "Live Text is not supported on this Mac."; return }
         capturing = true
+        captureGeneration += 1
+        let generation = captureGeneration
         Task {
-            await show()
+            await show(generation)
             capturing = false
         }
     }
@@ -92,7 +153,11 @@ final class ScreenText: ObservableObject {
         windows = []
         current.forEach { $0.orderOut(nil); $0.close() }
         // Give focus back to the app that was in front before the shortcut.
-        if restoreFocus { previousApp?.activate() }
+        if restoreFocus, let previousApp {
+            // Since macOS 14 activation is cooperative: the active app hands it over explicitly.
+            NSApp.yieldActivation(to: previousApp)
+            previousApp.activate(from: .current, options: [])
+        }
         previousApp = nil
     }
 
@@ -104,7 +169,7 @@ final class ScreenText: ObservableObject {
         if let screen { chip.show(on: screen) }
     }
 
-    private func show() async {
+    private func show(_ generation: Int) async {
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
             // Capture every display before showing any overlay, so no overlay appears in a capture.
@@ -114,7 +179,7 @@ final class ScreenText: ObservableObject {
                       let display = content.displays.first(where: { $0.displayID == number.uint32Value }) else { continue }
                 let filter = SCContentFilter(display: display, excludingWindows: [])
                 let config = SCStreamConfiguration()
-                let size = ScreenTextHotKey.pixelSize(points: filter.contentRect.size, scale: filter.pointPixelScale)
+                let size = ScreenCapture.pixelSize(points: filter.contentRect.size, scale: filter.pointPixelScale)
                 config.width = size.width
                 config.height = size.height
                 config.showsCursor = false
@@ -122,19 +187,23 @@ final class ScreenText: ObservableObject {
                 let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
                 captures.append((screen, image))
             }
+            // Disabled, cancelled or recording a shortcut meanwhile: don't take over the screen.
+            guard generation == captureGeneration, enabled, !recordingShortcut else { return }
             guard !captures.isEmpty else { failure = "No display could be captured."; return }
             failure = nil
             windows = captures.map {
-                ScreenTextWindow(screen: $0.0, image: $0.1, analyzer: analyzer,
+                ScreenTextWindow(screen: $0.0, image: $0.1,
                                  onClose: { [weak self] in self?.dismiss() },
                                  onCopy: { [weak self] text, window in self?.copy(text, from: window) })
             }
             let front = NSWorkspace.shared.frontmostApplication
             previousApp = front?.bundleIdentifier == Bundle.main.bundleIdentifier ? nil : front
-            NSApp.activate(ignoringOtherApps: true)
             let mouse = NSEvent.mouseLocation
             windows.forEach { $0.orderFrontRegardless() }
-            (windows.first { $0.frame.contains(mouse) } ?? windows[0]).makeKeyAndOrderFront(nil)
+            let target = windows.first { $0.frame.contains(mouse) } ?? windows[0]
+            keyTarget = target
+            NSApp.activate(ignoringOtherApps: true)
+            target.makeKeyAndOrderFront(nil)
         } catch {
             permitted = CGPreflightScreenCaptureAccess()
             failure = "Could not capture the screen: \(error.localizedDescription)"
@@ -143,14 +212,17 @@ final class ScreenText: ObservableObject {
 }
 
 final class ScreenTextWindow: NSWindow {
-    private let overlay = ImageAnalysisOverlayView()
-    private let hint = NSHostingView(rootView: ChipView(icon: "text.viewfinder", text: "Select text to copy · Esc to close"))
+    private let selectionView = SelectionView()
+    private let hint = NSHostingView(rootView: ChipView(icon: "text.viewfinder", text: "Reading text…"))
     private let onClose: () -> Void
     private let onCopy: (String, NSWindow) -> Void
-    private var dragging = false
+    private var layout = TextLayout(lines: [])
+    private var anchor: (position: TextPosition, start: CGPoint)?
+    /// A press made while text was still being recognized, resumed if the button is still down.
+    private var pendingPress: CGPoint?
+    private var selection = TextSelection(ranges: [])
 
-    init(screen: NSScreen, image: CGImage, analyzer: ImageAnalyzer,
-         onClose: @escaping () -> Void, onCopy: @escaping (String, NSWindow) -> Void) {
+    init(screen: NSScreen, image: CGImage, onClose: @escaping () -> Void, onCopy: @escaping (String, NSWindow) -> Void) {
         self.onClose = onClose
         self.onCopy = onCopy
         super.init(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
@@ -162,34 +234,43 @@ final class ScreenTextWindow: NSWindow {
         acceptsMouseMovedEvents = true
         backgroundColor = .black
 
-        let bounds = NSRect(origin: .zero, size: screen.frame.size)
+        let size = screen.frame.size
+        let bounds = NSRect(origin: .zero, size: size)
         let container = NSView(frame: bounds)
         let imageView = NSImageView(frame: bounds)
-        imageView.image = NSImage(cgImage: image, size: screen.frame.size)
+        imageView.image = NSImage(cgImage: image, size: size)
         imageView.imageScaling = .scaleAxesIndependently
         imageView.autoresizingMask = [.width, .height]
-        overlay.frame = bounds
-        overlay.autoresizingMask = [.width, .height]
-        overlay.trackingImageView = imageView
-        overlay.preferredInteractionTypes = .textSelection
+        selectionView.frame = bounds
+        selectionView.autoresizingMask = [.width, .height]
         container.addSubview(imageView)
-        container.addSubview(overlay)
+        container.addSubview(selectionView)
 
-        let size = hint.fittingSize
-        hint.frame = NSRect(x: (bounds.width - size.width) / 2, y: screen.visibleFrame.minY - screen.frame.minY + 20,
-                            width: size.width, height: size.height)
+        let hintSize = hint.fittingSize
+        hint.frame = NSRect(x: (bounds.width - hintSize.width) / 2, y: screen.visibleFrame.minY - screen.frame.minY + 20,
+                            width: hintSize.width, height: hintSize.height)
         hint.autoresizingMask = [.minXMargin, .maxXMargin]
         container.addSubview(hint)
         contentView = container
-        makeFirstResponder(overlay)
+        // Pointer moves arrive even before Tac becomes the active app.
+        container.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                                 owner: container, userInfo: nil))
 
         Task { @MainActor [weak self] in
-            let analysis = try? await analyzer.analyze(image, orientation: .up, configuration: .init(.text))
+            // Vision recognition is slow on a large display: keep it off the main thread.
+            let layout = await Task.detached(priority: .userInitiated) {
+                (try? TextLayout.recognize(image, size: size)) ?? TextLayout(lines: [])
+            }.value
             guard let self else { return }
-            self.overlay.analysis = analysis
-            if analysis?.hasResults(for: .text) != true {
-                self.hint.rootView = ChipView(icon: "text.magnifyingglass", text: "No text found · Esc to close")
+            self.layout = layout
+            if let press = self.pendingPress, NSEvent.pressedMouseButtons & 1 != 0, let position = layout.word(near: press) {
+                self.anchor = (position, press)
+            }
+            self.pendingPress = nil
+            if layout.isEmpty {
+                self.setHint(ChipView(icon: "text.magnifyingglass", text: "No text found · Esc to close"))
             } else {
+                self.setHint(ChipView(icon: "text.viewfinder", text: "Drag across text to copy · Esc to close"))
                 self.updateCursor()
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
                     NSAnimationContext.runAnimationGroup { $0.duration = 0.3; self?.hint.animator().alphaValue = 0 }
@@ -201,47 +282,91 @@ final class ScreenTextWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
+    private func setHint(_ chip: ChipView) {
+        let center = hint.frame.midX
+        hint.rootView = chip
+        let size = hint.fittingSize
+        hint.frame = NSRect(x: center - size.width / 2, y: hint.frame.minY, width: size.width, height: size.height)
+    }
+
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .leftMouseDown { dragging = true }
-        super.sendEvent(event)
         switch event.type {
-        case .mouseMoved, .leftMouseDragged, .cursorUpdate:
+        case .keyDown:
+            // Esc always leaves.
+            if event.keyCode == UInt16(kVK_Escape) { onClose(); return }
+            super.sendEvent(event)
+        case .leftMouseDown:
+            mouseDown(at: event.locationInWindow, clicks: event.clickCount)
+        case .leftMouseDragged:
+            if let anchor { show(layout.selection(from: anchor.position, start: anchor.start, to: event.locationInWindow)) }
             updateCursor()
         case .leftMouseUp:
-            dragging = false
-            // Let Live Text finish the selection, then copy it and leave the mode.
-            DispatchQueue.main.async { [weak self] in self?.copySelection() }
-        default: break
+            anchor = nil
+            pendingPress = nil
+            if !selection.isEmpty { onCopy(selection.text(in: layout.lines), self) }
+        case .mouseMoved, .mouseEntered, .cursorUpdate:
+            updateCursor()
+        default:
+            super.sendEvent(event)
         }
     }
 
-    override func keyDown(with event: NSEvent) {
-        if event.keyCode == UInt16(kVK_Escape) { onClose() } else { super.keyDown(with: event) }
+    private func mouseDown(at point: CGPoint, clicks: Int) {
+        // A press near a word starts on that word, so the aim doesn't need to be exact.
+        guard let position = layout.word(near: point) else {
+            anchor = nil
+            pendingPress = layout.isEmpty ? point : nil
+            show(TextSelection(ranges: []))
+            return
+        }
+        if clicks >= 2 {
+            // Double-click copies the word under the pointer.
+            anchor = nil
+            show(layout.word(position))
+        } else {
+            anchor = (position, point)
+            show(TextSelection(ranges: []))
+        }
     }
 
-    override func cancelOperation(_ sender: Any?) { onClose() }
+    private func show(_ new: TextSelection) {
+        guard new != selection else { return }
+        selection = new
+        selectionView.rects = layout.rects(for: new)
+    }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if flags == .command, event.charactersIgnoringModifiers == "c" {
-            if !copySelection() { NSSound.beep() }
+            if selection.isEmpty { NSSound.beep() } else { onCopy(selection.text(in: layout.lines), self) }
             return true
         }
         return super.performKeyEquivalent(with: event)
     }
 
-    @discardableResult
-    private func copySelection() -> Bool {
-        let text = overlay.selectedText
-        guard !text.isEmpty else { return false }
-        onCopy(text, self)
-        return true
-    }
-
-    /// I-beam over recognized text (and while selecting), arrow elsewhere.
+    /// I-beam on or near recognized text, and while selecting; arrow elsewhere.
     private func updateCursor() {
-        let point = overlay.convert(mouseLocationOutsideOfEventStream, from: nil)
-        (dragging || overlay.hasText(at: point) ? NSCursor.iBeam : NSCursor.arrow).set()
+        // Each display has its own window; only the one under the pointer may set the cursor.
+        guard isVisible, frame.contains(NSEvent.mouseLocation) else { return }
+        // Only the key window may change the cursor.
+        if !isKeyWindow, NSApp.isActive { makeKey() }
+        let point = mouseLocationOutsideOfEventStream
+        let near = layout.word(near: point)
+        (anchor != nil || near != nil ? NSCursor.iBeam : NSCursor.arrow).set()
+    }
+}
+
+/// Draws the selection like selected text: rounded accent-coloured boxes, one per line.
+final class SelectionView: NSView {
+    var rects: [CGRect] = [] { didSet { needsDisplay = true } }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.controlAccentColor.withAlphaComponent(0.35).setFill()
+        for rect in rects {
+            NSBezierPath(roundedRect: rect.insetBy(dx: -2, dy: -1), xRadius: 3, yRadius: 3).fill()
+        }
     }
 }
 
