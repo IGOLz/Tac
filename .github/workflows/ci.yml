@@ -1,0 +1,22 @@
+name: Build and test
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Test Swift
+        run: swift test
+      - name: Check release automation
+        run: |
+          python3 Tests/HomebrewChecks.py
+          node --test Tests/ReleaseIssuesChecks.cjs
+          bash -n scripts/build.sh scripts/install.sh
+          zsh -n scripts/release.sh scripts/publish.sh scripts/create-dmg.sh
+      - name: Build universal app
+        run: UNIVERSAL=1 scripts/build.sh

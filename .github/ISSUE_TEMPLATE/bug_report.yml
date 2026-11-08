@@ -1,0 +1,23 @@
+name: Bug report
+description: Report a problem with Tac
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Tac version
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: macOS version and Mac chip
+      placeholder: macOS 15.7, Apple M3
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include expected and actual behavior. Remove private screen content from attachments.
+    validations:
+      required: true

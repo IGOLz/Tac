@@ -1,0 +1,10 @@
+name: Feature request
+description: Suggest a utility or improvement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: Describe the task and how you handle it today.
+    validations:
+      required: true

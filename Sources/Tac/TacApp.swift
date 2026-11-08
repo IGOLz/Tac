@@ -3,12 +3,15 @@ import ServiceManagement
 
 @main
 struct TacApp: App {
+    @State private var updater = AppUpdater.shared
     @StateObject private var shortcut = FinderBackspace()
     @StateObject private var screenText = ScreenText()
     var body: some Scene {
         Window("Tac", id: "main") {
             ContentView(shortcut: shortcut, screenText: screenText)
+                .task { updater.checkAtLaunch() }
         }.defaultSize(width: 760, height: 520)
+        .commands { UpdateCommands(updater: updater) }
         MenuBarExtra("Tac", systemImage: "switch.2") {
             MenuContent(shortcut: shortcut, screenText: screenText)
         }
@@ -29,6 +32,8 @@ struct MenuContent: View {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
+        Button("Check for Updates…") { AppUpdater.shared.checkForUpdates() }
+            .disabled(!AppUpdater.shared.canCheckForUpdates)
         Divider()
         Button("Quit Tac") { NSApp.terminate(nil) }.keyboardShortcut("q")
     }
@@ -52,6 +57,7 @@ struct ContentView: View {
                 Label("Utilities", systemImage: "switch.2").tag("Utilities")
                 Section("Settings") {
                     Label("General", systemImage: "gearshape").tag("General")
+                    Label("Updates", systemImage: "arrow.triangle.2.circlepath").tag("Updates")
                 }
             }
             .navigationSplitViewColumnWidth(190)
@@ -124,6 +130,8 @@ struct ContentView: View {
                             }
                         }
                         if let failure = screenText.failure { Text(failure).foregroundStyle(.orange) }
+                    } else if page == "Updates" {
+                        UpdateSettingsView().frame(minHeight: 300)
                     } else {
                         card {
                             Toggle("Launch at login", isOn: $loginEnabled)
@@ -141,7 +149,7 @@ struct ContentView: View {
                         }
                         card {
                             Text("Private by default").font(.headline)
-                            Text("No network requests, analytics or keyboard recording. Screen text recognition runs on your Mac.")
+                            Text("Only update checks and downloads contact GitHub. No analytics or keyboard recording. Screen text recognition runs on your Mac.")
                         }
                     }
                 }.padding(DS.padding).frame(maxWidth: 780)

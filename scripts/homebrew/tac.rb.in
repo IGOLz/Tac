@@ -1,0 +1,14 @@
+cask "tac" do
+  version "@VERSION@"
+  sha256 "@SHA256@"
+
+  url "https://github.com/IGOLz/Tac/releases/download/v#{version}/Tac-#{version}.dmg"
+  name "Tac"
+  desc "Switchable Mac utilities for Finder and screen text"
+  homepage "https://github.com/IGOLz/Tac"
+
+  auto_updates true
+  depends_on macos: :sonoma
+
+  app "Tac.app"
+end
