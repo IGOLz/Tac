@@ -1,11 +1,8 @@
-# Tac 0.3.0
+# Tac 0.3.1
 
-Smarter screen text selection and a refreshed window.
+Copy Text from Screen works immediately on every Mac.
 
-- Copy Text from Screen now recognizes text with Apple's on-device Vision framework.
-- The pointer becomes an I-beam near text, and a selection can start just beside a word.
-- Dragging selects whole words and stays in the column you start in, so sidebars at the same height are left out.
-- Double-click copies a single word. Releasing the mouse copies, shows a "Text copied" chip and returns to your app.
-- Change the Copy Text from Screen shortcut in Utilities. The default stays ⌃⇧⌘T.
-- Fixed the overlay not taking keyboard focus on macOS 14 and later, which kept the I-beam and Esc from working.
-- The window follows a System Settings–style design with page headers, grouped rows, back and forward navigation and a status summary.
+- Fixed the overlay staying on "Reading text…" for a long time, mostly on older Macs. After installing or updating, macOS prepares accurate text recognition once, which can take a minute or more.
+- Tac now prepares recognition as soon as it opens, instead of when you press the shortcut.
+- Until it is ready, quick recognition makes text selectable right away and the accurate result replaces it automatically.
+- Utilities shows whether text recognition is preparing or ready.
