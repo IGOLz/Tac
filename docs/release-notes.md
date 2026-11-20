@@ -1,8 +1,8 @@
-# Tac 0.3.1
+# Tac 0.4.0
 
-Copy Text from Screen works immediately on every Mac.
+Middle-Click Scroll replaces Copy Text from Screen.
 
-- Fixed the overlay staying on "Reading text…" for a long time, mostly on older Macs. After installing or updating, macOS prepares accurate text recognition once, which can take a minute or more.
-- Tac now prepares recognition as soon as it opens, instead of when you press the shortcut.
-- Until it is ready, quick recognition makes text selectable right away and the accurate result replaces it automatically.
-- Utilities shows whether text recognition is preparing or ready.
+- New: click the mouse wheel on an empty area of a web page to scroll like on Windows. Move the pointer away from the marker to scroll, faster the farther you go. Click or press any key to stop, or hold the wheel, drag and release.
+- Links, browser tabs, buttons, fields, videos and anything the page handles clicks on keep their usual middle-click.
+- Works in Safari, Chromium browsers and web-based apps. It uses the Accessibility permission Tac already asks for.
+- Removed Copy Text from Screen. Tac no longer needs Screen Recording; you can turn it off for Tac in System Settings.
