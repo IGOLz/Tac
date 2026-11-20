@@ -4,7 +4,7 @@ cask "tac" do
 
   url "https://github.com/IGOLz/Tac/releases/download/v#{version}/Tac-#{version}.dmg"
   name "Tac"
-  desc "Switchable Mac utilities for Finder and screen text"
+  desc "Switchable Mac utilities for Finder and mouse scrolling"
   homepage "https://github.com/IGOLz/Tac"
 
   auto_updates true

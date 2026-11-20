@@ -5,29 +5,27 @@ import ServiceManagement
 struct TacApp: App {
     @State private var updater = AppUpdater.shared
     @StateObject private var shortcut = FinderBackspace()
-    @StateObject private var screenText = ScreenText()
+    @StateObject private var autoscroll = MiddleClickScroll()
     var body: some Scene {
         Window("Tac", id: "main") {
-            ContentView(shortcut: shortcut, screenText: screenText)
+            ContentView(shortcut: shortcut, autoscroll: autoscroll)
                 .task { updater.checkAtLaunch() }
         }.defaultSize(width: 760, height: 560)
         .commands { UpdateCommands(updater: updater) }
         MenuBarExtra("Tac", systemImage: "switch.2") {
-            MenuContent(shortcut: shortcut, screenText: screenText)
+            MenuContent(shortcut: shortcut, autoscroll: autoscroll)
         }
     }
 }
 
 struct MenuContent: View {
     @ObservedObject var shortcut: FinderBackspace
-    @ObservedObject var screenText: ScreenText
+    @ObservedObject var autoscroll: MiddleClickScroll
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Text(shortcut.active ? "Finder shortcut active" : "Finder shortcut inactive")
         Toggle("Backspace to Trash", isOn: $shortcut.enabled)
-        Toggle("Copy Text from Screen", isOn: $screenText.enabled)
-        Button("Select Text on Screen (\(screenText.shortcut.displayString))") { screenText.toggle() }
-            .disabled(!screenText.enabled)
+        Toggle("Middle-Click Scroll", isOn: $autoscroll.enabled)
         Button("Open Tac") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
@@ -74,7 +72,7 @@ enum SidebarPage: String, Hashable, CaseIterable, Identifiable {
 
 struct ContentView: View {
     @ObservedObject var shortcut: FinderBackspace
-    @ObservedObject var screenText: ScreenText
+    @ObservedObject var autoscroll: MiddleClickScroll
     @State private var selection: SidebarPage? = .utilities
     /// Back/forward between pages, like System Settings.
     @State private var backStack: [SidebarPage] = []
@@ -91,7 +89,7 @@ struct ContentView: View {
                     ForEach(SidebarPage.settings) { SidebarRow(page: $0).tag($0) }
                 }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { SidebarStatus(shortcut: shortcut, screenText: screenText) }
+            .safeAreaInset(edge: .bottom, spacing: 0) { SidebarStatus(shortcut: shortcut, autoscroll: autoscroll) }
             .navigationSplitViewColumnWidth(min: 190, ideal: 210, max: 260)
         } detail: {
             detail(for: selection ?? .utilities)
@@ -141,7 +139,7 @@ struct ContentView: View {
     @ViewBuilder
     private func detail(for page: SidebarPage) -> some View {
         switch page {
-        case .utilities: UtilitiesView(shortcut: shortcut, screenText: screenText)
+        case .utilities: UtilitiesView(shortcut: shortcut, autoscroll: autoscroll)
         case .general: GeneralView()
         case .updates: UpdateSettingsView()
         }
@@ -159,14 +157,13 @@ private struct SidebarRow: View {
 /// Live status at the bottom of the sidebar.
 private struct SidebarStatus: View {
     @ObservedObject var shortcut: FinderBackspace
-    @ObservedObject var screenText: ScreenText
+    @ObservedObject var autoscroll: MiddleClickScroll
 
     private var status: (color: Color, title: String, detail: String?) {
-        let needsAccessibility = shortcut.enabled && !shortcut.trusted
-        let needsScreen = screenText.enabled && !screenText.permitted
-        let on = [shortcut.enabled, screenText.enabled].filter { $0 }.count
-        if needsAccessibility || needsScreen { return (.orange, "Permissions needed", needsAccessibility ? "Accessibility" : "Screen Recording") }
-        if shortcut.failure != nil || screenText.failure != nil { return (.orange, "Check Utilities", nil) }
+        let needsAccessibility = (shortcut.enabled && !shortcut.trusted) || (autoscroll.enabled && !autoscroll.trusted)
+        let on = [shortcut.enabled, autoscroll.enabled].filter { $0 }.count
+        if needsAccessibility { return (.orange, "Permissions needed", "Accessibility") }
+        if shortcut.failure != nil || autoscroll.failure != nil { return (.orange, "Check Utilities", nil) }
         if on == 0 { return (.gray, "All utilities off", nil) }
         return (.green, "Ready", on == 1 ? "1 utility on" : "\(on) utilities on")
     }
@@ -191,17 +188,16 @@ private struct SidebarStatus: View {
 
 struct UtilitiesView: View {
     @ObservedObject var shortcut: FinderBackspace
-    @ObservedObject var screenText: ScreenText
-    @ObservedObject var recognition = TextRecognition.shared
+    @ObservedObject var autoscroll: MiddleClickScroll
 
     var body: some View {
         PageScroll {
             PageHero(symbol: "switch.2", color: .blue, title: "Utilities",
                      description: "Small changes to everyday Mac behavior. Each one has its own switch.")
 
-            if shortcut.enabled && !shortcut.trusted {
+            if (shortcut.enabled && !shortcut.trusted) || (autoscroll.enabled && !autoscroll.trusted) {
                 NoticeCard(symbol: "hand.raised.fill", title: "Allow Accessibility",
-                           message: "Backspace to Trash needs Accessibility to recognize Finder. It turns on automatically once allowed.") {
+                           message: "Backspace to Trash and Middle-Click Scroll need Accessibility to read the item under the pointer or in focus. They turn on automatically once allowed.") {
                     Button("Open Settings") { shortcut.requestPermission() }.glassProminentButtonStyle()
                 }
             }
@@ -215,49 +211,15 @@ struct UtilitiesView: View {
                           subtitle: "Move selected files and folders to the Trash with ⌫.", isOn: $shortcut.enabled)
             }
 
-            if screenText.enabled && !screenText.permitted {
-                NoticeCard(symbol: "rectangle.dashed.badge.record", title: "Allow Screen Recording",
-                           message: "Copy Text from Screen needs Screen Recording to read the displays. After allowing it, quit and reopen Tac.") {
-                    Button("Open Settings") { screenText.requestPermission() }.glassProminentButtonStyle()
-                }
-            }
-            if let failure = screenText.failure {
-                NoticeCard(symbol: "exclamationmark.triangle.fill", title: "Copy Text from Screen", message: failure)
+            if let failure = autoscroll.failure {
+                NoticeCard(symbol: "exclamationmark.triangle.fill", title: "Middle-Click Scroll is off", message: failure)
             }
 
-            SectionCard(title: "Screen",
-                        footer: "Text is recognized on your Mac. Drag across text to copy it, or double-click a word. Only the column you start in is selected. Esc cancels.") {
-                ToggleRow(symbol: "text.viewfinder", color: .purple, title: "Copy Text from Screen",
-                          subtitle: "Freeze the screen and select any text, even inside images.", isOn: $screenText.enabled)
-                RowDivider()
-                SettingRow(symbol: "keyboard.fill", color: .gray, title: "Shortcut",
-                           subtitle: "Press it anywhere to start selecting text.") {
-                    HotKeyRecorder(screenText: screenText)
-                }
-                .disabled(!screenText.enabled)
-                .opacity(screenText.enabled ? 1 : 0.5)
-                if screenText.enabled {
-                    RowDivider()
-                    SettingRow(symbol: "text.magnifyingglass", color: .indigo, title: "Text Recognition",
-                               subtitle: recognitionStatus) {
-                        switch recognition.state {
-                        case .ready: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                        case .failed: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                        case .idle, .preparing: ProgressView().controlSize(.small)
-                        }
-                    }
-                }
+            SectionCard(title: "Mouse",
+                        footer: "Like Windows: move away from the marker to scroll faster, click or press any key to stop, or hold the wheel, drag and release. Links, tabs, buttons and anything else with its own middle-click keep it; autoscroll starts only on empty page areas.") {
+                ToggleRow(symbol: "computermouse.fill", color: .purple, title: "Middle-Click Scroll",
+                          subtitle: "Click the mouse wheel on a web page, then move the pointer to scroll.", isOn: $autoscroll.enabled)
             }
-        }
-    }
-}
-
-extension UtilitiesView {
-    var recognitionStatus: String {
-        switch recognition.state {
-        case .ready: "Ready on this Mac."
-        case .failed: "Quick recognition is in use. Tac retries accurate recognition at the next capture."
-        case .idle, .preparing: "Preparing… After installing or updating, this can take a minute. Quick recognition is used meanwhile."
         }
     }
 }
@@ -281,7 +243,7 @@ struct GeneralView: View {
 
             SectionCard(title: "Privacy") {
                 SettingRow(symbol: "hand.raised.fill", color: .blue, title: "Private by default",
-                           subtitle: "Only update checks and downloads contact GitHub. No analytics or keyboard recording. Screen text recognition runs on your Mac.")
+                           subtitle: "Only update checks and downloads contact GitHub. No analytics, keyboard or mouse recording.")
             }
         }
     }

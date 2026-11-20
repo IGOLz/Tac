@@ -15,7 +15,7 @@
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
-<p align="center"><img src=".github/assets/utilities.webp" width="760" alt="Tac utilities: Backspace to Trash and Copy Text from Screen"></p>
+<p align="center"><img src=".github/assets/utilities.webp" width="760" alt="Tac utilities: Backspace to Trash and Middle-Click Scroll"></p>
 
 ## Why
 
@@ -37,20 +37,17 @@ brew upgrade --cask tac
 brew uninstall --cask tac
 ```
 
-Requires **macOS Sonoma 14 or later**. Finder shortcuts work on both architectures.
-Screen text recognition uses Apple's on-device Vision framework. Recognition quality
-depends on text size, language and image clarity. Intel builds are cross-compiled;
-runtime testing is on Apple silicon.
+Requires **macOS Sonoma 14 or later**. Utilities work on both architectures.
+Intel builds are cross-compiled; runtime testing is on Apple silicon.
 
 Grant only the permissions needed by the features you enable:
 
 | Utility | Permission | Why |
 | --- | --- | --- |
 | Backspace to Trash | Accessibility | Recognize Finder focus and remap Backspace |
-| Copy Text from Screen | Screen Recording | Capture the displays for on-device text recognition |
+| Middle-Click Scroll | Accessibility | Recognize web content under the pointer and scroll it |
 
-Open these panes from Tac's permission cards. After enabling Screen Recording,
-quit and reopen Tac if macOS requests it.
+Open the pane from Tac's permission card.
 
 Closing the window keeps Tac running in the menu bar. **Quit Tac** stops its
 utilities. **General → Launch at login** is optional.
@@ -67,22 +64,17 @@ are unchanged. Holding the key does not repeatedly trash the next item. Unknown
 Accessibility contexts are left unchanged. Tac never deletes files directly or
 empties the Trash.
 
-### Copy Text from Screen
+### Middle-Click Scroll
 
-Press **⌃⇧⌘T** to freeze the displays and select text, including text inside images.
-Text is recognized on your Mac with Apple's Vision framework. The pointer becomes an
-I-beam within a few points of recognized text, and a selection can start just beside it.
-Dragging selects whole words and stays in the column you start in, so a sidebar at the
-same height is left out. Double-click copies a single word. Releasing the mouse copies
-the selection, shows a "Text copied" chip and returns to your app. **Esc** cancels.
-The same shortcut closes the overlay.
+Click the mouse wheel on a web page to scroll like on Windows. A round marker stays
+where you clicked; move the pointer above or below it and the page scrolls in that
+direction, faster the farther you go. Click any button or press any key to stop
+(**Esc** is not passed to the page). You can also hold the wheel, drag and release.
 
-After Tac is installed or updated, macOS prepares accurate recognition once, which can
-take a minute or more on some Macs. Tac starts this when it opens and shows the progress in
-**Utilities → Screen → Text Recognition**; meanwhile quick recognition keeps the shortcut usable.
-
-Change the shortcut in **Utilities → Screen → Shortcut**: click it and press a new
-combination with ⌘, ⌃ or ⌥, or a function key.
+It starts only on empty areas of web content in Safari, Chromium browsers and web-based
+apps. Anything with its own action keeps its usual middle-click: links open in a new tab,
+browser tabs close, and buttons, fields, videos and elements the page handles clicks on
+are left alone, as are native views. Unknown Accessibility contexts are left unchanged.
 
 ### Signed updates
 
@@ -97,9 +89,7 @@ Automatic installation is off by default.
 
 ## Privacy
 
-No analytics, advertising or keyboard recording. Preferences stay on your Mac.
-Screen captures are processed locally and are not uploaded; selected text is
-written to the macOS clipboard.
+No analytics, advertising, keyboard or mouse recording. Preferences stay on your Mac.
 
 Update checks and downloads contact GitHub and its asset hosts, which receive
 normal connection metadata such as your IP address. Sparkle system profiling is
@@ -143,7 +133,7 @@ for bugs and feature ideas. Remove private content from any screenshots you atta
 
 ## Acknowledgements
 
-Built with SwiftUI, AppKit, ScreenCaptureKit and Vision.
+Built with SwiftUI, AppKit and the Accessibility API.
 Updates use [Sparkle](https://sparkle-project.org), distributed under its
 [license](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE).
 

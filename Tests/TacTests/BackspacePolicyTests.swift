@@ -20,8 +20,3 @@ import CoreGraphics
     }
     #expect(BackspacePolicy.accepts(key: 51, flags: .maskAlphaShift, finder: true, role: "AXList", editing: false))
 }
-
-@Test func screenCaptureUsesNativePixels() {
-    #expect(ScreenCapture.pixelSize(points: CGSize(width: 1512, height: 982), scale: 2) == (3024, 1964))
-    #expect(ScreenCapture.pixelSize(points: CGSize(width: 1920, height: 1080), scale: 1) == (1920, 1080))
-}

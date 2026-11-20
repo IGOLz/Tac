@@ -72,17 +72,6 @@ final class FinderBackspace: ObservableObject {
         tap = nil; source = nil; active = false; remapped = false
     }
 
-    private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
-        var value: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
-        return value
-    }
-
-    private func element(_ value: CFTypeRef?) -> AXUIElement? {
-        guard let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
-        return (value as! AXUIElement)
-    }
-
     private func handle(_ type: CGEventType, _ event: CGEvent) -> Unmanaged<CGEvent>? {
         let unchanged = Unmanaged.passUnretained(event)
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
@@ -102,14 +91,14 @@ final class FinderBackspace: ObservableObject {
               front.bundleIdentifier == "com.apple.finder" else { return unchanged }
         let app = AXUIElementCreateApplication(front.processIdentifier)
         AXUIElementSetMessagingTimeout(app, 0.05)
-        guard let focus = element(attribute(app, kAXFocusedUIElementAttribute)) else { return unchanged }
-        let role = attribute(focus, kAXRoleAttribute) as? String
+        guard let focus = AX.element(AX.attribute(app, kAXFocusedUIElementAttribute)) else { return unchanged }
+        let role = AX.attribute(focus, kAXRoleAttribute) as? String
         // Editable text is excluded even when Finder exposes an unexpected role.
-        let editing = attribute(focus, kAXSelectedTextRangeAttribute) != nil
+        let editing = AX.attribute(focus, kAXSelectedTextRangeAttribute) != nil
         guard BackspacePolicy.accepts(key: 51, flags: event.flags, finder: true, role: role, editing: editing) else { return unchanged }
-        if let window = element(attribute(app, kAXFocusedWindowAttribute)) {
-            guard attribute(window, kAXSubroleAttribute) as? String == kAXStandardWindowSubrole,
-                  (attribute(window, "AXSheets") as? [AXUIElement] ?? []).isEmpty else { return unchanged }
+        if let window = AX.element(AX.attribute(app, kAXFocusedWindowAttribute)) {
+            guard AX.attribute(window, kAXSubroleAttribute) as? String == kAXStandardWindowSubrole,
+                  (AX.attribute(window, "AXSheets") as? [AXUIElement] ?? []).isEmpty else { return unchanged }
         }
         // Let Finder handle selection, permissions, Trash, confirmations and Undo.
         event.flags.insert(.maskCommand)
